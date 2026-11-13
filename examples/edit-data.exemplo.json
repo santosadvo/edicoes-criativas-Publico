@@ -1,0 +1,35 @@
+{
+  "_readme": "Exemplo de uma edição criativa completa (17 s, vertical). Copie para remotion/public/edit-data.json e troque textos e tempos pelos do SEU corte. Tempos em segundos na linha do tempo do cut.mp4; os cortes reais vêm de segments.json.",
+  "width": 1080,
+  "height": 1920,
+  "fps": 30,
+  "durationSec": 17.3667,
+  "camera": {"enabled": true, "zooms": [1.06, 1.16, 1.24, 1.1, 1.18], "pushIn": 0.035, "targetX": 0.5, "targetY": 0.4},
+  "hook": {"enabled": true, "endSec": 2.6, "style": "impacto", "text": "Humano ou clone de IA? Você não vai saber.", "accent": "#ff3b3b"},
+  "captions": {
+    "enabled": true, "style": "destaque", "accent": "#ff3b3b",
+    "fontSize": 76, "maxWords": 3, "safeWidth": 720, "paddingBottom": 420,
+    "windows": [{"start": 4.3333, "end": 13.0667, "paddingBottom": 700}]
+  },
+  "inserts": [],
+  "behind": [],
+  "split": {"seam": 180, "crossfade": 10},
+  "splitInserts": [
+    {"src": "gfx:terminal", "start": 4.3333, "end": 8.5, "layout": "bottom", "bandH": 620, "zoom": 1.0, "focusY": 70,
+     "gfx": {"title": "Claude Code", "icon": "✻", "iconColor": "#d97757", "command": "crie meu clone de IA",
+             "steps": [{"at": 48, "text": "lendo o roteiro"}, {"at": 66, "text": "gerando a voz"}, {"at": 84, "text": "enviando para o avatar"}],
+             "done": "clone pronto", "doneAt": 104}},
+    {"src": "gfx:versus", "start": 8.5, "end": 10.2, "layout": "bottom", "bandH": 620, "zoom": 1.0, "focusY": 70,
+     "gfx": {"left": "HUMANO", "right": "CLONE", "sign": "=", "percentTo": 100, "percentFrames": 40}},
+    {"src": "gfx:connect", "start": 10.2, "end": 13.0667, "layout": "bottom", "bandH": 620, "zoom": 1.0, "focusY": 70,
+     "gfx": {"left": "Claude Code", "leftColor": "#d97757", "right": "Avatar", "badge": "RESULTADO PERFEITO", "badgeAt": 66}}
+  ],
+  "transitions": [{"at": 4.3333}],
+  "whips": [{"at": 13.0667, "dir": "up", "dist": 240}],
+  "punches": [
+    {"at": 2.86, "hold": 0.55, "zoom": 1.22, "shake": 0},
+    {"at": 14.5, "hold": 1.6, "zoom": 1.2, "shake": 12, "rgb": true}
+  ],
+  "nameTags": [{"start": 14.45, "end": 17.3, "kicker": "NOS PRÓXIMOS POSTS", "name": "Seu Nome", "top": 240}],
+  "soundtrack": {"enabled": true, "file": "trilha.mp3", "volume": 0.16}
+}
