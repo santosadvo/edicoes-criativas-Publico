@@ -78,12 +78,15 @@ export const CustomGraphics: React.FC = () => {
     nameTags?: NameTagItem[];
     punches?: Punch[];
     whips?: Whip[];
-  };
+    fx?: FxWindow[];
+  } & MirrorData;
   const splits = d.splitInserts ?? [];
   const flashes = d.transitions ?? [];
   const tags = d.nameTags ?? [];
   return (
     <>
+      <MirrorStage d={d} />
+      {d.fx?.length ? <FxLayer items={d.fx} /> : null}
       {d.punches?.length ? <Punches items={d.punches} /> : null}
       {d.whips?.length ? <Whips items={d.whips} /> : null}
       {splits.length ? <SplitScreen items={splits} opts={d.split} /> : null}
@@ -91,6 +94,7 @@ export const CustomGraphics: React.FC = () => {
         <NameTag key={i} item={t} />
       ))}
       {flashes.length ? <CutFlashes items={flashes} /> : null}
+      <MirrorOverlays d={d} />
     </>
   );
 };
@@ -941,4 +945,643 @@ const Whips: React.FC<{items: Whip[]}> = ({items}) => {
   const speed = Math.abs(off) / D; // 0..1 — blur follows velocity
   const t = w.dir === 'left' ? `translateX(${off.toFixed(1)}px) scale(1.08)` : `translateY(${off.toFixed(1)}px) scale(1.08)`;
   return <Redraw transform={t} filter={`blur(${(speed * 18).toFixed(1)}px)`} />;
+};
+
+// ============ OFFICIAL EFFECTS ON THE FOOTAGE: fx[] ===========================
+// @remotion/effects (WebGL, needs `--gl=angle`) applied to a re-draw of cut.mp4
+// through <Video> from @remotion/media. Data:
+//   fx[] = {start, end, effects: [{name, params, rampIn, rampOut}]}
+// `params` go straight to the effect; `rampIn`/`rampOut` (frames) fade the
+// effect's `amount` (when it has one) in and out so it never pops on/off.
+import {Video as FxVideo} from '@remotion/media';
+import {thermalVision} from '@remotion/effects/thermal-vision';
+import {scanlines} from '@remotion/effects/scanlines';
+import {pixelate} from '@remotion/effects/pixelate';
+import {chromaticAberration} from '@remotion/effects/chromatic-aberration';
+import {halftone} from '@remotion/effects/halftone';
+import {duotone} from '@remotion/effects/duotone';
+import {glow} from '@remotion/effects/glow';
+import {tvSignalOff} from '@remotion/effects/tv-signal-off';
+import {zoomBlur} from '@remotion/effects/zoom-blur';
+import {noiseDisplacement} from '@remotion/effects/noise-displacement';
+import {vignette} from '@remotion/effects/vignette';
+import {pixelDissolve} from '@remotion/effects/pixel-dissolve';
+import {wave} from '@remotion/effects/wave';
+import {grayscale} from '@remotion/effects/grayscale';
+import {tint} from '@remotion/effects/tint';
+import {contrast} from '@remotion/effects/contrast';
+import {whiteNoise} from '@remotion/effects/white-noise';
+import {zigzag} from '@remotion/effects/zigzag';
+import {dotGrid} from '@remotion/effects/dot-grid';
+import {lightTrail} from '@remotion/effects/light-trail';
+
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+const FX: Record<string, (p?: any) => any> = {
+  thermalVision, scanlines, pixelate, chromaticAberration, halftone, duotone, glow, tvSignalOff, zoomBlur,
+  noiseDisplacement, vignette, pixelDissolve, wave, grayscale, tint, contrast, whiteNoise, zigzag, dotGrid, lightTrail,
+};
+type FxSpec = {name: string; params?: Record<string, unknown>; rampIn?: number; rampOut?: number};
+type FxWindow = {start: number; end: number; effects: FxSpec[]};
+
+const FxLayer: React.FC<{items: FxWindow[]}> = ({items}) => {
+  const frame = useCurrentFrame();
+  const {fps} = useVideoConfig();
+  const w = items.find((it) => {
+    const a = Math.round(it.start * fps) + VIDEO_LAG;
+    const b = Math.round(it.end * fps) + VIDEO_LAG;
+    return frame >= a && frame < b;
+  });
+  if (!w) return null;
+  const a = Math.round(w.start * fps) + VIDEO_LAG;
+  const b = Math.round(w.end * fps) + VIDEO_LAG;
+  const effects = w.effects
+    .filter((e) => FX[e.name])
+    .map((e) => {
+      const k = Math.min(
+        e.rampIn ? clamp((frame - a + 1) / e.rampIn, 0, 1) : 1,
+        e.rampOut ? clamp((b - frame) / e.rampOut, 0, 1) : 1,
+      );
+      const params = {...(e.params ?? {})} as Record<string, unknown>;
+      if (k < 1) params.amount = (typeof params.amount === 'number' ? (params.amount as number) : 1) * k;
+      return FX[e.name](params);
+    });
+  return (
+    <AbsoluteFill style={{backgroundColor: '#000'}}>
+      <FxVideo src={staticFile('cut.mp4')} muted effects={effects} style={{width: '100%', height: '100%'}} />
+    </AbsoluteFill>
+  );
+};
+
+// =============================================================================
+// MIRROR FAMILY — built for a challenge reel ("O Espelho"), kept data-driven so a
+// future video can reuse a piece when ITS concept calls for it (check the
+// creative ledger first). All keys optional; absent = renders nothing.
+//   mirrorTurn {at, frames}            the whole frame turns 180° like a hand mirror
+//                                      and stays un-mirrored to the end
+//   mirrorFold {seamAt, sweepStart, sweepEnd, releaseAt, releaseFrames, axis[[t,x]]}
+//                                      left half of the face reflected over the nose axis
+//   syncDrift[] {start, end, lags[], opacity[], registered}
+//                                      delayed blue copies of the face (mouth lags / trail)
+//   prizeBadge {enterAt, anchor{x,y}, w, h, faces[], flipAt[], dropAt}
+//                                      virtual lanyard card with spring physics
+//   mirrorTunnel {start, end, box{x,y,w,h}, levels, lagPerLevel, label}
+//                                      recursive pocket mirror, each level later
+//   endFreeze {at, until}              picture freezes while the voice goes on
+//   clueTags[] {n, text, start, end, side, y, bracket?}
+//   mirrorType[] {start, end, y, size, faces[{lines[], flipAt}], exit?, foot?}
+// =============================================================================
+import {Freeze, spring} from 'remotion';
+import {DynamicVideo} from './Main';
+import segData from '../public/segments.json';
+import trackData from '../public/track.json';
+import {loadFont as loadTight} from '@remotion/google-fonts/InterTight';
+const {fontFamily: tight} = loadTight('normal', {weights: ['700', '800']});
+
+const INK = '#0B0B0F';
+const PAPER = '#F4F2EE';
+const CLONE = '#7C8CFF';
+const HUMAN = '#E3263E';
+const flipEase = Easing.bezier(0.65, 0, 0.35, 1);
+const easeIn = Easing.bezier(0.55, 0, 1, 0.45);
+
+type MTurn = {at: number; frames?: number};
+type MFold = {seamAt: number; sweepStart: number; sweepEnd: number; releaseAt: number; releaseFrames?: number; axis: [number, number][]};
+type MDrift = {start: number; end: number; lags: number[]; opacity: number[]; registered?: boolean};
+type BadgeFace = {kicker: string; title: string; sub?: string; toggle?: {onAt: number; pulseAt?: number}; glyph?: {char: string; at: number}};
+type MBadge = {enterAt: number; anchor: {x: number; y: number}; w: number; h: number; faces: BadgeFace[]; flipAt?: number[]; dropAt: number};
+type MTunnel = {start: number; end: number; box: {x: number; y: number; w: number; h: number}; levels: number; lagPerLevel: number; label?: string};
+type MFreeze = {at: number; until: number};
+type Clue = {n: number; text: string; start: number; end: number; side?: 'left' | 'right'; y?: number; bracket?: {x: number; y: number; w: number; h: number}};
+type MType = {start: number; end: number; y?: number; size?: number; faces: {lines: string[]; flipAt: number}[]; exit?: {at: number}; foot?: string};
+type MirrorData = {
+  mirrorTurn?: MTurn;
+  mirrorFold?: MFold;
+  syncDrift?: MDrift[];
+  prizeBadge?: MBadge;
+  mirrorTunnel?: MTunnel;
+  endFreeze?: MFreeze;
+  clueTags?: Clue[];
+  mirrorType?: MType[];
+};
+
+const F = (sec: number, fps: number) => Math.round(sec * fps) + VIDEO_LAG;
+
+// Same math as DynamicVideo in Main.tsx — where the face sits ON SCREEN.
+const camAt = (frame: number, fps: number, W: number, H: number) => {
+  const cam = (editData as unknown as {camera: {enabled: boolean; zooms: number[]; pushIn: number; targetX: number; targetY: number}}).camera;
+  const segs = (segData as {segments: {start: number; dur: number}[]}).segments;
+  let idx = 0;
+  for (let i = 0; i < segs.length; i++) if (frame - 1 >= Math.round(segs[i].start * fps)) idx = i;
+  const segFrom = Math.round(segs[idx].start * fps) + 1;
+  const segLen = Math.max(1, Math.round(segs[idx].dur * fps));
+  const S = (cam.zooms[idx % cam.zooms.length] ?? 1.14) + cam.pushIn * clamp((frame - segFrom) / segLen, 0, 1);
+  const pts = (trackData as unknown as {points: [number, number][]}).points;
+  const [cx, cy] = pts[Math.min(frame, pts.length - 1)] ?? [0.5, 0.4];
+  const tx = clamp(cam.targetX * W - cx * W * S, W - W * S, 0);
+  const ty = clamp(cam.targetY * H - cy * H * S, H - H * S, 0);
+  return {S, x: tx + cx * W * S, y: ty + cy * H * S, seg: idx};
+};
+const segOf = (frame: number, fps: number) => camAt(frame, fps, 1080, 1920).seg;
+
+const turnState = (d: MirrorData, frame: number, fps: number): {on: boolean; theta: number; done: boolean; t: number} => {
+  if (!d.mirrorTurn) return {on: false, theta: 0, done: false, t: 0};
+  const a = F(d.mirrorTurn.at, fps);
+  const n = d.mirrorTurn.frames ?? 10;
+  if (frame < a) return {on: false, theta: 0, done: false, t: 0};
+  const t = clamp((frame - a) / n, 0, 1);
+  return {on: true, theta: 180 * flipEase(t), done: t >= 1, t};
+};
+const faceScreen = (d: MirrorData, frame: number, fps: number) => {
+  const c = camAt(frame, fps, 1080, 1920);
+  return turnState(d, frame, fps).done ? {...c, x: 1080 - c.x} : c;
+};
+
+// ---- STAGE: the turned/un-mirrored frame (+ badge after the turn, + freeze) ----
+const MirrorStage: React.FC<{d: MirrorData}> = ({d}) => {
+  const frame = useCurrentFrame();
+  const {fps} = useVideoConfig();
+  const ts = turnState(d, frame, fps);
+  if (!ts.on) return null;
+  const fz = d.endFreeze && frame >= F(d.endFreeze.at, fps) ? F(d.endFreeze.at, fps) : null;
+  const t = ts.t;
+  const s = 1 - 0.08 * Math.sin(Math.PI * t);
+  const blur = ts.done ? 0 : 2 * Math.sin(Math.PI * t);
+  const glint = !ts.done && Math.abs(Math.cos((ts.theta * Math.PI) / 180)) < 0.15;
+  const inner = (
+    <AbsoluteFill style={{perspective: 2400}}>
+      <AbsoluteFill style={{transform: `rotateY(${ts.theta.toFixed(2)}deg) scale(${s.toFixed(4)})`, transformStyle: 'preserve-3d', filter: blur ? `blur(${blur.toFixed(2)}px)` : undefined}}>
+        <AbsoluteFill style={{backfaceVisibility: 'visible'}}>
+          <DynamicVideo />
+        </AbsoluteFill>
+        {d.prizeBadge ? <PrizeBadge b={d.prizeBadge} /> : null}
+      </AbsoluteFill>
+    </AbsoluteFill>
+  );
+  let freezeFx: React.ReactNode = null;
+  let content = inner;
+  if (fz !== null) {
+    const k = interpolate(frame, [fz, fz + 20], [0, 1], {extrapolateLeft: 'clamp', extrapolateRight: 'clamp', easing: softLand});
+    const creep = interpolate(frame, [fz, fz + 39], [1, 1.03], {extrapolateLeft: 'clamp', extrapolateRight: 'clamp', easing: softLand});
+    content = (
+      <AbsoluteFill style={{transform: `scale(${creep.toFixed(4)})`, filter: `saturate(${(1 - 0.3 * k).toFixed(3)})`}}>
+        <Freeze frame={fz}>{inner}</Freeze>
+      </AbsoluteFill>
+    );
+    freezeFx = (
+      <>
+        <AbsoluteFill style={{background: CLONE, mixBlendMode: 'color', opacity: 0.12 * k}} />
+        <AbsoluteFill style={{background: 'radial-gradient(ellipse at 50% 42%, transparent 45%, rgba(0,0,0,0.55) 100%)', opacity: k}} />
+      </>
+    );
+  }
+  return (
+    <AbsoluteFill style={{backgroundColor: INK}}>
+      {content}
+      {freezeFx}
+      {glint ? <div style={{position: 'absolute', left: 537, top: 0, width: 6, height: 1920, background: '#dfe3ff', opacity: 0.9, boxShadow: `0 0 30px ${CLONE}`}} /> : null}
+    </AbsoluteFill>
+  );
+};
+
+// ---- OVERLAYS above the stage: fold, drift, pre-turn badge, tunnel, clues, type ----
+const MirrorOverlays: React.FC<{d: MirrorData}> = ({d}) => {
+  const frame = useCurrentFrame();
+  const {fps} = useVideoConfig();
+  const ts = turnState(d, frame, fps);
+  return (
+    <>
+      {d.mirrorFold ? <MirrorFold m={d.mirrorFold} /> : null}
+      {(d.syncDrift ?? []).map((m, i) => (
+        <SyncDrift key={i} m={m} d={d} />
+      ))}
+      {d.prizeBadge && !ts.on ? <PrizeBadge b={d.prizeBadge} /> : null}
+      {d.mirrorTunnel ? <MirrorTunnel m={d.mirrorTunnel} d={d} /> : null}
+      {(d.clueTags ?? []).map((c) => (
+        <ClueTag key={c.n} c={c} />
+      ))}
+      {(d.mirrorType ?? []).map((m, i) => (
+        <MirrorType key={i} m={m} d={d} />
+      ))}
+    </>
+  );
+};
+
+// ---- MirrorFold (signature) ----
+const MirrorFold: React.FC<{m: MFold}> = ({m}) => {
+  const frame = useCurrentFrame();
+  const {fps} = useVideoConfig();
+  const seamA = F(m.seamAt, fps);
+  const relA = F(m.releaseAt, fps);
+  const relN = m.releaseFrames ?? 8;
+  if (frame < seamA || frame >= relA + relN) return null;
+  const t = frame / fps;
+  const ks = m.axis;
+  const axis = interpolate(t, ks.map((k) => k[0]), ks.map((k) => k[1]), {extrapolateLeft: 'clamp', extrapolateRight: 'clamp'});
+  const p =
+    frame < relA
+      ? interpolate(frame, [F(m.sweepStart, fps), F(m.sweepEnd, fps)], [0, 1], {extrapolateLeft: 'clamp', extrapolateRight: 'clamp', easing: snap})
+      : 1 - interpolate(frame, [relA, relA + relN], [0, 1], {extrapolateRight: 'clamp', easing: easeIn});
+  const X = 1080 + (axis - 1080) * p; // clip edge: from the right border to the axis
+  const draw = interpolate(frame, [seamA, seamA + 10], [0, 1], {extrapolateLeft: 'clamp', extrapolateRight: 'clamp', easing: snap});
+  const pulse = 0.8 + 0.2 * (0.5 + 0.5 * Math.sin((frame / 15) * Math.PI * 2));
+  const seamX = p > 0.001 ? X : axis;
+  const tear = frame === relA;
+  const fadeOut = frame >= relA ? 1 - (frame - relA) / relN : 1;
+  return (
+    <AbsoluteFill style={{pointerEvents: 'none'}}>
+      {p > 0.001 ? (
+        <AbsoluteFill style={{clipPath: `inset(0 0 0 ${X.toFixed(1)}px)`}}>
+          <AbsoluteFill style={{transformOrigin: '0 0', transform: `translateX(${(2 * axis).toFixed(1)}px) scaleX(-1)`}}>
+            <DynamicVideo />
+          </AbsoluteFill>
+        </AbsoluteFill>
+      ) : null}
+      {tear ? (
+        <AbsoluteFill style={{clipPath: 'inset(780px 0 1100px 0)', transform: 'translateX(24px)'}}>
+          <DynamicVideo />
+        </AbsoluteFill>
+      ) : null}
+      <div
+        style={{
+          position: 'absolute',
+          left: seamX - 1.5,
+          top: 220,
+          width: 3,
+          height: 1280 * draw,
+          background: CLONE,
+          boxShadow: `0 0 18px ${CLONE}, 0 0 4px #fff`,
+          opacity: (p > 0.001 ? pulse : 1) * fadeOut,
+        }}
+      />
+    </AbsoluteFill>
+  );
+};
+
+// ---- SyncDrift ----
+const BLUE_MATRIX = (() => {
+  const c3 = [0x7c / 255, 0x8c / 255, 0xff / 255];
+  const L = [0.2126, 0.7152, 0.0722];
+  return c3.map((c) => `${(L[0] * c).toFixed(3)} ${(L[1] * c).toFixed(3)} ${(L[2] * c).toFixed(3)} 0 0`).join(' ') + ' 0 0 0 1 0';
+})();
+const SyncDrift: React.FC<{m: MDrift; d: MirrorData}> = ({m, d}) => {
+  const frame = useCurrentFrame();
+  const {fps} = useVideoConfig();
+  const a = F(m.start, fps);
+  const b = F(m.end, fps);
+  if (frame < a || frame >= b + 6) return null;
+  const env = frame < a + 4 ? (frame - a + 1) / 4 : frame >= b ? 1 - (frame - b) / 6 : 1;
+  const fc = faceScreen(d, frame, fps);
+  const mirrored = turnState(d, frame, fps).done;
+  const rx = 270 * fc.S;
+  const ry = 360 * fc.S;
+  const mask = `radial-gradient(ellipse ${rx.toFixed(0)}px ${ry.toFixed(0)}px at ${fc.x.toFixed(0)}px ${fc.y.toFixed(0)}px, #000 55%, transparent 100%)`;
+  const id = `drift${Math.round(m.start * 100)}`;
+  return (
+    <AbsoluteFill style={{pointerEvents: 'none'}}>
+      <svg width="0" height="0" style={{position: 'absolute'}}>
+        <filter id={id} colorInterpolationFilters="sRGB">
+          <feColorMatrix type="matrix" values={BLUE_MATRIX} />
+        </filter>
+      </svg>
+      {m.lags.map((L, i) => {
+        if (segOf(frame - L, fps) !== segOf(frame, fps)) return null; // never a ghost from another shot
+        return (
+          <AbsoluteFill key={L} style={{mixBlendMode: 'screen', opacity: (m.opacity[i] ?? 0.4) * env, maskImage: mask, WebkitMaskImage: mask}}>
+            <AbsoluteFill style={{filter: `url(#${id})`, transform: mirrored ? 'scaleX(-1)' : undefined}}>
+              <Sequence from={L} layout="none">
+                <DynamicVideo frameOffset={m.registered ? L : 0} />
+              </Sequence>
+            </AbsoluteFill>
+          </AbsoluteFill>
+        );
+      })}
+    </AbsoluteFill>
+  );
+};
+
+// ---- PrizeBadge (inside the stage after the turn, so it turns with the frame) ----
+const BadgeFaceView: React.FC<{f: BadgeFace; frame: number; fps: number}> = ({f, frame, fps}) => {
+  const tog = f.toggle ? rise(frame, F(f.toggle.onAt, fps), 8) : 0;
+  const pA = f.toggle?.pulseAt !== undefined ? F(f.toggle.pulseAt, fps) : -999;
+  const pulse = interpolate(frame, [pA, pA + 5, pA + 10], [1, 1.06, 1], {extrapolateLeft: 'clamp', extrapolateRight: 'clamp'});
+  const g = f.glyph ? rise(frame, F(f.glyph.at, fps), 8, snap) : 0;
+  return (
+    <div style={{position: 'absolute', inset: 0, borderRadius: 18, background: INK, border: '1px solid #FFFFFF2E', boxShadow: '0 18px 40px rgba(0,0,0,.5)', padding: '30px 30px', display: 'flex', flexDirection: 'column', justifyContent: 'center', gap: 6, backfaceVisibility: 'hidden'}}>
+      <div style={{fontFamily: mono, fontWeight: 700, fontSize: 26, letterSpacing: 2, color: HUMAN}}>{f.kicker}</div>
+      <div style={{fontFamily: tight, fontWeight: 800, fontSize: 60, lineHeight: 1, color: PAPER, display: 'flex', alignItems: 'center', gap: 16}}>
+        {f.title}
+        {f.glyph ? <span style={{fontSize: 34, opacity: g, transform: `scale(${(1.6 - 0.6 * g).toFixed(3)})`, display: 'inline-block'}}>{f.glyph.char}</span> : null}
+      </div>
+      {f.sub || f.toggle ? (
+        <div style={{display: 'flex', alignItems: 'center', gap: 14, fontFamily: tight, fontWeight: 700, fontSize: 28, color: `${PAPER}B3`}}>
+          {f.toggle ? (
+            <span style={{width: 64, height: 34, borderRadius: 17, background: tog > 0.5 ? HUMAN : '#FFFFFF26', position: 'relative', display: 'inline-block', transform: `scale(${pulse})`, boxShadow: pulse > 1.01 ? `0 0 18px ${HUMAN}` : undefined}}>
+              <span style={{position: 'absolute', top: 4, left: 4 + 30 * tog, width: 26, height: 26, borderRadius: 13, background: '#fff'}} />
+            </span>
+          ) : null}
+          {f.sub}
+        </div>
+      ) : null}
+    </div>
+  );
+};
+const PrizeBadge: React.FC<{b: MBadge}> = ({b}) => {
+  const frame = useCurrentFrame();
+  const {fps} = useVideoConfig();
+  const a = F(b.enterAt, fps);
+  const drop = F(b.dropAt, fps);
+  if (frame < a || frame > drop + 16) return null;
+  const sp = spring({frame: frame - a, fps, config: {damping: 11, stiffness: 140, mass: 0.8}});
+  const landT = Math.max(0, (frame - a - 8) / fps);
+  let rot = frame - a > 8 ? 8 * Math.exp(-landT / 0.6) * Math.cos((2 * Math.PI * landT) / 0.9) : 0;
+  let y = b.anchor.y - 520 * (1 - sp) + 3 * Math.sin(frame / 18);
+  if (frame >= drop) {
+    const tt = (frame - drop) / fps;
+    y += 0.5 * 4200 * tt * tt;
+    rot += 25 * easeIn(clamp((frame - drop) / 14, 0, 1));
+  }
+  const flips = (b.flipAt ?? []).map((t) => F(t, fps));
+  let extra = 0;
+  let swapped = false;
+  for (const fA of flips) {
+    if (frame >= fA) {
+      const u = clamp((frame - fA) / 10, 0, 1);
+      extra += 180 * flipEase(u);
+      if (u >= 0.5) swapped = true;
+    }
+  }
+  const front = swapped ? b.faces[2] ?? b.faces[0] : b.faces[0];
+  const back = b.faces[1] ?? b.faces[0];
+  return (
+    <div style={{position: 'absolute', left: b.anchor.x - b.w / 2, top: y, width: b.w, height: b.h, transformOrigin: '50% -20px', transform: `rotate(${rot.toFixed(2)}deg)`, transformStyle: 'preserve-3d'}}>
+      <div style={{position: 'absolute', left: b.w / 2 - 30, top: -30, width: 60, height: 26, borderRadius: 6, background: HUMAN}}>
+        <div style={{position: 'absolute', left: 25, top: 8, width: 10, height: 10, borderRadius: 5, background: INK}} />
+      </div>
+      <div style={{position: 'absolute', inset: 0, transformStyle: 'preserve-3d', transform: `rotateY(${extra.toFixed(2)}deg)`}}>
+        <BadgeFaceView f={front} frame={frame} fps={fps} />
+        <div style={{position: 'absolute', inset: 0, transform: 'rotateY(180deg)', backfaceVisibility: 'hidden', transformStyle: 'preserve-3d'}}>
+          <BadgeFaceView f={back} frame={frame} fps={fps} />
+        </div>
+      </div>
+    </div>
+  );
+};
+
+// ---- MirrorTunnel ----
+const MirrorTunnel: React.FC<{m: MTunnel; d: MirrorData}> = ({m, d}) => {
+  const frame = useCurrentFrame();
+  const {fps} = useVideoConfig();
+  const a = F(m.start, fps);
+  const b = F(m.end, fps);
+  if (frame < a || frame >= b + 8) return null;
+  const mirrored = turnState(d, frame, fps).done;
+  const out = frame >= b ? easeIn(clamp((frame - b) / 8, 0, 1)) : 0;
+  const fc = faceScreen(d, frame, fps);
+  const boxes: {x: number; y: number; w: number; h: number}[] = [m.box];
+  for (let k = 1; k < m.levels; k++) {
+    const p = boxes[k - 1];
+    const w = p.w * 0.72;
+    const h = p.h * 0.72;
+    boxes.push({x: p.x + (p.w - w) / 2, y: p.y + (p.h - h) / 2 - p.h * 0.08, w, h});
+  }
+  const enter = rise(frame, a, 12);
+  const drift = 1 + 0.005 * ((frame - a) / fps);
+  const cx = m.box.x + m.box.w / 2;
+  const cy = m.box.y + m.box.h / 2;
+  const segs = (segData as {segments: {start: number}[]}).segments;
+  return (
+    <AbsoluteFill
+      style={{
+        pointerEvents: 'none',
+        transformOrigin: `${cx}px ${cy}px`,
+        transform: `scale(${((1.6 - 0.6 * enter) * drift * (1 - 0.8 * out)).toFixed(4)})`,
+        opacity: 1 - out,
+        filter: enter < 1 ? `blur(${((1 - enter) * 10).toFixed(1)}px)` : undefined,
+      }}
+    >
+      {boxes.map((bx, k) => {
+        const lvIn = rise(frame, a + 3 * k, 10);
+        const lag = (k + 1) * m.lagPerLevel;
+        const sameShot = segOf(frame - lag, fps) === segOf(frame, fps);
+        const z = (bx.w / 1080) * 1.25; // zoom toward the face
+        // face position in UN-mirrored screen space for this level's own frame
+        const fx = mirrored ? 1080 - fc.x : fc.x;
+        const mir = (mirrored ? 1 : 0) + (k % 2 === 0 ? 1 : 0);
+        const shownX = mir % 2 === 1 ? 1080 - fx : fx;
+        const ox = bx.w / 2 - shownX * z;
+        const oy = bx.h / 2 - fc.y * z;
+        const video = (
+          <AbsoluteFill style={{transform: mir % 2 === 1 ? 'scaleX(-1)' : undefined}}>
+            <DynamicVideo frameOffset={lag} />
+          </AbsoluteFill>
+        );
+        const segStart = Math.round(segs[segOf(frame, fps)].start * fps) + 1;
+        return (
+          <div
+            key={k}
+            style={{
+              position: 'absolute',
+              left: bx.x,
+              top: bx.y,
+              width: bx.w,
+              height: bx.h,
+              overflow: 'hidden',
+              border: `2px solid ${CLONE}`,
+              opacity: lvIn * [1, 0.85, 0.7, 0.55][k % 4],
+              background: INK,
+              boxShadow: '0 20px 50px rgba(0,0,0,.45)',
+            }}
+          >
+            <div style={{position: 'absolute', left: ox, top: oy, width: 1080, height: 1920, transformOrigin: '0 0', transform: `scale(${z.toFixed(4)})`}}>
+              {sameShot ? (
+                <Sequence from={lag} layout="none">
+                  {video}
+                </Sequence>
+              ) : (
+                <Freeze frame={segStart}>{video}</Freeze>
+              )}
+            </div>
+            {k === 0 && m.label ? (
+              <div style={{position: 'absolute', left: 12, top: 10, fontFamily: mono, fontWeight: 700, fontSize: 24, color: PAPER, textShadow: '0 2px 8px #000'}}>{m.label}</div>
+            ) : null}
+          </div>
+        );
+      })}
+    </AbsoluteFill>
+  );
+};
+
+// ---- ClueTag ----
+const ClueTag: React.FC<{c: Clue}> = ({c}) => {
+  const frame = useCurrentFrame();
+  const {fps} = useVideoConfig();
+  const a = F(c.start, fps) - 2;
+  const b = F(c.end, fps);
+  if (frame < a || frame >= b + 8) return null;
+  const i = rise(frame, a, 10);
+  const o = frame >= b ? easeIn(clamp((frame - b) / 8, 0, 1)) : 0;
+  const right = c.side === 'right';
+  const dx = (1 - i) * (right ? 40 : -40) + 0.6 * (frame - a) * (right ? -1 : 1);
+  const dot = interpolate(frame - a, [0, 6, 12], [1, 0.3, 1], {extrapolateLeft: 'clamp', extrapolateRight: 'clamp'});
+  const br = c.bracket;
+  const bp = br ? rise(frame, a + 2, 12) : 0;
+  return (
+    <AbsoluteFill style={{pointerEvents: 'none'}}>
+      <div
+        style={{
+          position: 'absolute',
+          top: c.y ?? 250,
+          ...(right ? {right: 64} : {left: 64}),
+          padding: '18px 24px',
+          borderRadius: 20,
+          background: '#0B0B0FB3',
+          backdropFilter: 'blur(12px)',
+          border: '1px solid #FFFFFF2E',
+          opacity: i * (1 - o),
+          transform: `translate(${dx.toFixed(1)}px, ${(-20 * o).toFixed(1)}px)`,
+          filter: i < 1 ? `blur(${((1 - i) * 8).toFixed(1)}px)` : undefined,
+          maxWidth: 760,
+        }}
+      >
+        <div style={{display: 'flex', alignItems: 'center', gap: 10, fontFamily: mono, fontWeight: 700, fontSize: 30, letterSpacing: 3, color: `${PAPER}CC`}}>
+          <span style={{width: 10, height: 10, borderRadius: 5, background: CLONE, opacity: dot, boxShadow: `0 0 10px ${CLONE}`}} />
+          PISTA {c.n}
+        </div>
+        <div style={{fontFamily: tight, fontWeight: 700, fontSize: 46, lineHeight: 1.08, color: PAPER, marginTop: 6}}>{c.text}</div>
+      </div>
+      {br ? (
+        <svg style={{position: 'absolute', left: 0, top: 0}} width={1080} height={1920}>
+          {[
+            [br.x, br.y + 28, br.x, br.y, br.x + 28, br.y],
+            [br.x + br.w - 28, br.y, br.x + br.w, br.y, br.x + br.w, br.y + 28],
+            [br.x + br.w, br.y + br.h - 28, br.x + br.w, br.y + br.h, br.x + br.w - 28, br.y + br.h],
+            [br.x + 28, br.y + br.h, br.x, br.y + br.h, br.x, br.y + br.h - 28],
+          ].map((q, k) => (
+            <polyline
+              key={k}
+              points={`${q[0]},${q[1]} ${q[2]},${q[3]} ${q[4]},${q[5]}`}
+              fill="none"
+              stroke={CLONE}
+              strokeWidth={3}
+              strokeDasharray={56}
+              strokeDashoffset={56 * (1 - bp)}
+              opacity={1 - o}
+              style={{filter: `drop-shadow(0 0 6px ${CLONE})`}}
+            />
+          ))}
+        </svg>
+      ) : null}
+    </AbsoluteFill>
+  );
+};
+
+// ---- MirrorType: headline born mirrored, turns readable ----
+const renderLine = (line: string) =>
+  line.split(/(\{[^}]+\})/).map((part, i) =>
+    part.startsWith('{') ? (
+      <span key={i} style={{color: CLONE}}>
+        {part.slice(1, -1)}
+      </span>
+    ) : (
+      <span key={i}>{part}</span>
+    ),
+  );
+const MirrorType: React.FC<{m: MType; d: MirrorData}> = ({m, d}) => {
+  const frame = useCurrentFrame();
+  const {fps} = useVideoConfig();
+  const a = Math.round(m.start * fps);
+  const b = Math.round(m.end * fps);
+  if (frame < a || frame >= b) return null;
+  const size = m.size ?? 104;
+  const y = m.y ?? 250;
+  // Face 0 is born turned (180°, read backwards) and turns to 0° at its flipAt.
+  // Each later face turns 0 → -180 in 10 frames and is swapped in at edge-on;
+  // past 90° the card shows its back, which reads mirrored — so the new face
+  // is counter-mirrored to land readable.
+  const f0 = F(m.faces[0].flipAt, fps);
+  let theta = frame < f0 ? 180 + 20 * (1 - clamp((frame - a) / 4, 0, 1)) : 180 - 180 * flipEase(clamp((frame - f0) / 12, 0, 1));
+  let face = 0;
+  let counter = false;
+  for (let k = 1; k < m.faces.length; k++) {
+    const fk = F(m.faces[k].flipAt, fps);
+    if (frame >= fk) {
+      const u = clamp((frame - fk) / 10, 0, 1);
+      theta = -180 * flipEase(u);
+      if (u >= 0.5) {
+        face = k;
+        counter = true;
+      }
+    }
+  }
+  const showFace = m.faces[face];
+  const blur = 8 * (1 - Math.abs(Math.cos((theta * Math.PI) / 180)));
+  const creep = 1 + 0.025 * clamp((frame - a) / Math.max(1, b - a), 0, 1);
+  let sx = 1;
+  let lineOp = 0;
+  let lineY = y + 60;
+  let lineX = 540;
+  if (m.exit) {
+    const e = F(m.exit.at, fps);
+    if (frame >= e) {
+      const u = clamp((frame - e) / 8, 0, 1);
+      sx = 1 - easeIn(u);
+      const fc = faceScreen(d, frame, fps);
+      lineX = fc.x;
+      const v = clamp((frame - e - 8) / 12, 0, 1);
+      lineOp = u >= 1 ? 1 - v : 0;
+      lineY = y + 60 + (fc.y - y - 60) * v;
+    }
+  }
+  const gradK = clamp((frame - a) / 8, 0, 1) * (sx > 0.02 ? 1 : 0);
+  const lastFace = m.faces[m.faces.length - 1];
+  const footIn = m.foot ? rise(frame, F(lastFace.flipAt, fps) + 6, 10) : 0;
+  return (
+    <AbsoluteFill style={{pointerEvents: 'none'}}>
+      <AbsoluteFill style={{background: `linear-gradient(180deg, ${INK}73 0px, transparent 620px)`, opacity: gradK}} />
+      <div style={{position: 'absolute', left: 70, width: 940, top: y, perspective: 1600}}>
+        <div
+          style={{
+            transformOrigin: `${(lineX - 70).toFixed(0)}px 50%`,
+            transform: `scaleX(${sx.toFixed(3)}) rotateY(${theta.toFixed(2)}deg) scale(${creep.toFixed(4)})`,
+            filter: blur > 0.3 ? `blur(${blur.toFixed(1)}px)` : undefined,
+            textAlign: 'center',
+            fontFamily: tight,
+            fontWeight: 800,
+            fontSize: size,
+            letterSpacing: -2,
+            lineHeight: 1.02,
+            color: PAPER,
+            textShadow: '0 6px 24px rgba(0,0,0,.45)',
+          }}
+        >
+          <div style={{transform: counter ? 'scaleX(-1)' : undefined}}>
+            {showFace.lines.map((l, i) => (
+              <div key={i}>{renderLine(l)}</div>
+            ))}
+          </div>
+        </div>
+      </div>
+      {m.foot ? (
+        <div
+          style={{
+            position: 'absolute',
+            left: 0,
+            right: 0,
+            top: y + 40 + lastFace.lines.length * size * 1.02,
+            textAlign: 'center',
+            fontFamily: mono,
+            fontWeight: 700,
+            fontSize: 30,
+            letterSpacing: 3,
+            color: `${PAPER}B3`,
+            opacity: footIn,
+            transform: `translateY(${((1 - footIn) * 16).toFixed(1)}px)`,
+          }}
+        >
+          {m.foot}
+        </div>
+      ) : null}
+      {lineOp > 0 ? <div style={{position: 'absolute', left: lineX - 1.5, top: lineY - 60, width: 3, height: 120, background: CLONE, boxShadow: `0 0 18px ${CLONE}`, opacity: lineOp}} /> : null}
+    </AbsoluteFill>
+  );
 };

@@ -379,9 +379,21 @@ The cut is approved and the user picked the style in the UI (`preview_style.json
 → load **one** file and build exactly what was picked:
 
 - **"Edições criativas"** (the user's keyword) or any edit he expects to be
-  *directed*: also read **`references/creative-direction.md`** — beat sheet,
-  pacing, motion grammar, the `gfx:`/`punches`/`whips`/`nameTags` devices, sound,
-  quality gates. A cut + captions alone is never the deliverable.
+  *directed*: also read **`references/creative-direction.md`** — pacing, motion
+  grammar, sound, quality gates. A cut + captions alone is never the deliverable.
+- **MANDATORY before writing edit-data.json: run the `video-director` agent**
+  (`agents/video-director.md`; also installed at `~/.claude/agents/`). Give it
+  the edit dir once `captions.json`, `segments.json` and `track.json` exist. It
+  reads the transcript, the frames and **`creative-ledger.md`** (what past edits
+  used), invents three concepts, rejects repeats and writes `<edit>/direction.md`
+  with a beat sheet and NEW BUILD specs. Build THAT plan — new devices go into
+  `CustomGraphics.tsx` as data-driven components (and stay there for future
+  videos). The catalogue devices (`gfx:*`, punches, whips, flashes, split) are
+  support only, max 2 per video. Never skip this: on 2026-11-14 an edit made
+  from the catalogue alone came out identical to the previous video and was
+  rejected.
+- **At delivery, append the ledger entry** from direction.md to
+  `creative-ledger.md` (concept, signature device, devices, palette).
 - **Vertical / Reels / TikTok / Shorts → read `references/shortform.md`.** Karaoke captions, static hook headline, dynamic camera, inserts, behind-the-subject, SFX, soundtrack.
 - **Horizontal / YouTube / tutorial / vlog → read `references/longform.md`.** Retention cut is there too (read it BEFORE Phase 1 on longform jobs), B-roll, lower-thirds, chapter cards, callouts, .srt + chapters, soundtrack.
 

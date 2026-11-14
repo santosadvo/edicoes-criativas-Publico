@@ -12,9 +12,20 @@ The shot library itself is vendored at `references/shotcraft/` (see NOTICE.md).
 
 ---
 
+## 0. The concept comes first — and it comes from the video
+
+A list of devices is not direction. Before anything else, run the
+**`video-director` agent** (`agents/video-director.md`). It reads the
+transcript and frames, checks `creative-ledger.md` and returns a concept that
+belongs to THIS video (a world/format metaphor, a treatment of the footage, or
+typography as protagonist) plus a beat sheet with at least two NEW builds, one
+of them acting on the footage itself (face-tracked, time, image treatment,
+behind the subject). The test: if you could swap in another transcript and
+keep the plan, the plan is wrong. Everything below serves the concept.
+
 ## 1. Direct before you build — the beat sheet
 
-Write a beat sheet in chat (one line per beat) before touching edit-data.json:
+The director writes the beat sheet in `<edit>/direction.md`, one line per beat:
 
 | beat | time | role | visual subject | device | sound |
 |---|---|---|---|---|---|
@@ -83,7 +94,17 @@ Write a beat sheet in chat (one line per beat) before touching edit-data.json:
 | split + gfx band | `splitInserts[] {src:"gfx:<name>", gfx:{…}}` | the beat names something showable |
 | name tag | `nameTags[] {start,end,kicker,name}` | a person is named |
 
-`gfx:` catalogue — `terminal` (app/terminal typing a command + steps + done),
+**Footage-level vocabulary (prefer these over cards):**
+
+| device | data | notes |
+|---|---|---|
+| official effects on the footage | `fx[] {start, end, effects:[{name, params, rampIn, rampOut}]}` | `@remotion/effects` 4.0.482 via `<Video>` of `@remotion/media`; render with `--gl=angle` (set in remotion.config.ts). Names wired: thermalVision, scanlines, pixelate, chromaticAberration, halftone, duotone, glow, tvSignalOff, zoomBlur, noiseDisplacement, vignette, pixelDissolve, wave, grayscale, tint, contrast, whiteNoise, zigzag, dotGrid, lightTrail. Use as a TREATMENT that means something, not decoration. |
+| mirror family | `mirrorTurn`, `mirrorFold`, `syncDrift[]`, `prizeBadge`, `mirrorTunnel`, `endFreeze`, `clueTags[]`, `mirrorType[]` | built for a challenge reel ("O Espelho"); see the header comment in CustomGraphics.tsx. Reusable pieces (syncDrift = delayed copies, endFreeze = picture stops/voice goes on, mirrorType = 3D-flip headline) — but check the ledger: they are that video's signature. |
+| freeze / time | `<Freeze>`, `<Sequence from={lag}>` + `DynamicVideo frameOffset` | delayed copies registered to the camera; never show a lagged frame from another shot (`segOf`). |
+
+Upgrading the template to Remotion ≥4.0.523 unlocks `@remotion/video-matting` (text behind the subject without RVM), and ≥4.0.539–542 adds `magnify` (face-locked loupe), `shatter`, `tear`, `filmBurn`, `irisWipe`, `lightning`. Test the upgrade on a copy first.
+
+`gfx:` catalogue (support only) — `terminal` (app/terminal typing a command + steps + done),
 `versus` (A = B / A vs B cards, scan line, % counter), `connect` (two nodes, a
 pulsing line, badge pops on the payoff word), `counter` (number rolls to value,
 lands in accent), `bigword` (words slam in with blur-clear). Add a new one

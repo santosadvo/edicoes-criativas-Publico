@@ -20,6 +20,10 @@ planos. Todos os créditos e licenças estão preservados em `skill/LICENSE` e e
 
 | Recurso | Onde | O que faz |
 |---|---|---|
+| **Diretor criativo (agente)** | `skill/agents/video-director.md` | Lê a transcrição e os quadros, inventa 3 conceitos próprios do vídeo, recusa o que já foi usado e escreve o roteiro de batidas com efeitos NOVOS. É o que impede a edição de sair sempre igual |
+| Registro anti-repetição | `skill/creative-ledger.md` | O que cada vídeo entregue usou; o diretor lê os 3 últimos |
+| Efeitos na própria imagem | `fx[]` | 20 efeitos oficiais do `@remotion/effects` (térmico, halftone, pixelização, aberração cromática, sinal de TV…) aplicados ao vídeo numa janela de tempo |
+| Família Espelho | `mirrorTurn`, `mirrorFold`, `syncDrift`, `endFreeze`… | Rosto dobrado em simetria, quadro que gira como espelho, boca atrasada, túnel de espelhos, congelamento com a voz continuando |
 | Manual de direção | `skill/references/creative-direction.md` | Roteiro de batidas, ritmo medido, curvas de movimento, som, checagens, como estudar um vídeo de referência |
 | `gfx:terminal` | tela dividida | Janela de app/terminal digitando um comando e executando etapas |
 | `gfx:versus` | tela dividida | "A = B" ou "A vs B", com linha de escaneamento e porcentagem |
@@ -62,8 +66,8 @@ modelo é o `.env.example`. Detalhes em `skill/install.md`.
 
 1. Ponha o vídeo numa pasta e abra o Claude Code nela.
 2. Diga: **"edições criativas neste vídeo"**.
-3. O agente transcreve, aperta o corte, escreve um roteiro de batidas (o que
-   entra em cada frase), monta os gráficos, renderiza e confere os quadros antes
+3. O agente transcreve, aperta o corte, chama o **diretor criativo**, que
+   inventa um conceito só deste vídeo e escreve o roteiro de batidas, monta os gráficos, renderiza e confere os quadros antes
    de entregar `edit/final.mp4`.
 4. Peça ajustes em linguagem normal: "troca o gráfico do meio", "mais zoom no
    final", "tira o whip".
