@@ -58,6 +58,12 @@ mkdir -p ~/.claude/skills && cp -R edicoes-criativas-Publico/skill ~/.claude/ski
 cd ~/.claude/skills/edvid && uv sync
 ```
 
+Instale também o agente diretor criativo, que a skill chama antes de montar a edição:
+
+```bash
+mkdir -p ~/.claude/agents && cp ~/.claude/skills/edvid/agents/video-director.md ~/.claude/agents/
+```
+
 A transcrição roda na sua máquina, sem chave de API. As chaves opcionais (imagens
 por IA, banco de imagens, trilha por IA) vão em `~/.claude/skills/edvid/.env`; o
 modelo é o `.env.example`. Detalhes em `skill/install.md`.
